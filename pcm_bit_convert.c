@@ -122,6 +122,25 @@ char *read_raw_pcm(const char *p, size_t *bytes_read) {
   return pcm_buf;
 }
 
+void convert_s16_to_24bit(int8_t *input, int8_t *output, int num_samples) {
+  for (int i = 0; i < num_samples; ++i) {
+    memset(output + 4 * i, 0x00, 4);
+    output[4 * i + 2] = input[2 * i + 1];
+    output[4 * i + 1] = input[2 * i];
+  }
+}
+
+void convert_s16_to_32bit(int8_t *input, int8_t *output, int num_samples) {
+  for (int i = 0; i < num_samples; ++i) {
+    // 将4字节输出清零
+    memset(output + 4 * i, 0x00, 4);
+
+    // 复制16位数据到32位数据的低16位位置
+    output[4 * i + 2] = input[2 * i];      // 低8位
+    output[4 * i + 3] = input[2 * i + 1];  // 高8位
+  }
+}
+
 int convert_pcm_bit(const char *scr_path, const char *out_path,
                     int sample_bit) {
   size_t raw_size = 0;
@@ -189,7 +208,8 @@ int convert_pcm_bit(const char *scr_path, const char *out_path,
   char frame[4];           // 32bit frame size
   size_t p = header_size;  // skip header data from source file dump
   size_t frame_size = (raw_size - header_size) / 2;
-  printf("frame_size : %lu\n", frame_size);
+  printf("sample_byte_size : %lu, frame_size : %lu \n", sample_byte_size,
+         frame_size);
 
   for (size_t i = 0; i < frame_size;
        i++) {  // shift 16 bit data to 32 bit, Little endian format
@@ -197,14 +217,21 @@ int convert_pcm_bit(const char *scr_path, const char *out_path,
     // little endian
     memset(frame, 0x00, 4);
     // memcpy(frame + (sample_byte_size - 2), pcm_buf + p, 2);
-    //  or
-    //  y[2] = pcm_buf[p+1];
-    //  y[1] = pcm_buf[p];
-    //  y[0] = 0x00;
-    //  y[0] = 0x00;
+    //  or  32bit frame size
+    // y[2] = pcm_buf[p + 1];
+    // y[1] = pcm_buf[p];
+    // y[0] = 0x00;
+    // y[3] = 0x00;
 
-    frame[1] = pcm_buf[p];
-    frame[2] = pcm_buf[p + 1];
+    if (sample_byte_size == 3) {
+      // frame[1] = pcm_buf[p];
+      // frame[2] = pcm_buf[p + 1];
+      convert_s16_to_24bit((int8_t *)(pcm_buf + p), (int8_t *)frame, 1);
+    } else {
+      // frame[2] = pcm_buf[p];
+      // frame[3] = pcm_buf[p + 1];
+      convert_s16_to_32bit((int8_t *)(pcm_buf + p), (int8_t *)frame, 1);
+    }
 
     // big endian 32bit
     // y[0] = pcm_buf[p+1];
@@ -216,6 +243,16 @@ int convert_pcm_bit(const char *scr_path, const char *out_path,
 
     // 24bit need to be 3 bytes aligned
     fwrite(frame, sample_byte_size, 1, f_out);
+
+    // save 24bit pcm data, for debug
+    // 区别在于我们这边写了4个字节，写wav文件的时候只写了3个字节
+    // FILE *fp =
+    //     fopen("/Users/frank/Downloads/log/1_convert_s16_to_24bit_2channel.pcm",
+    //           "ab+");
+    // if (fp != NULL) {
+    //   fwrite(frame, 3, 1, fp);
+    //   fclose(fp);
+    // }
 
     p += 2;
   }
